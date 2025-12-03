@@ -1,0 +1,3 @@
+/home/hp/CLionProjects/fdkct/build/CMakeFiles/fdk_recon.dir
+/home/hp/CLionProjects/fdkct/build/CMakeFiles/edit_cache.dir
+/home/hp/CLionProjects/fdkct/build/CMakeFiles/rebuild_cache.dir
