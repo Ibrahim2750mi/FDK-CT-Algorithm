@@ -3,8 +3,8 @@
 Phantom::Phantom() {
     // From Table 1 in the paper
     ellipsoids = {
-        {0, 0, 0, 40, 40, 2, 1.0},           // Outer cylinder
-        {0, 0, 0, 34, 34, 2, -1.21},         // Inner cylinder (negative = less dense)
+        {0, 0, 0, 40, 40, 1e9, 1.0},           // Outer cylinder
+        {0, 0, 0, 34, 34, 1e9, -1.21},         // Inner cylinder (negative = less dense)
         {0, 0, 0, 30, 20, 20.98, 0.21},      // Central ellipsoid
         {-5, 0, 5, 10.95, 10.95, 10.95, 0.053},   // Small sphere
         {-7, -6, -5, 14.14, 16.73, 10.95, 0.316}, // Ellipsoid 5

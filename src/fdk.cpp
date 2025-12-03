@@ -103,11 +103,11 @@ void FDKReconstructor::cosineWeight(std::vector<std::vector<double>>& projection
 
 #include <fftw3.h>
 
-void fft1d(std::vector<std::complex<double>>& data, bool inverse) {
+void fft1d(std::vector<std::complex<double>>& data, const bool inverse) {
     int N = data.size();
 
-    fftw_complex* in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
-    fftw_complex* out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
+    auto* in = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
+    auto* out = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
 
     // Copy data to FFTW format
     for (int i = 0; i < N; i++) {
@@ -200,9 +200,9 @@ void FDKReconstructor::backproject(
     int nz = volume.size();
 
     // Reconstruction grid (assume centered at origin)
-    double gridSpacing = 1.0; // Can be parameter
 
     for (int iz = 0; iz < nz; iz++) {
+        double gridSpacing = 1;
         double z = (iz - nz/2.0) * gridSpacing;
 
         for (int iy = 0; iy < ny; iy++) {

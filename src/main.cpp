@@ -21,7 +21,7 @@ int main() {
     params.D = 60.0;
     params.numDetectorRows = 39;
     params.numDetectorCols = 65;
-    params.detectorSpacing = 1.0;
+    params.detectorSpacing = 1;
     params.numAngles = 32;
 
     std::cout << "Creating phantom..." << std::endl;
