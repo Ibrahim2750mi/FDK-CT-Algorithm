@@ -35,9 +35,12 @@ FDKReconstructor::generateProjections(const Phantom& phantom) {
                 double Z = (row - params_.numDetectorRows/2.0) * params_.detectorSpacing;
 
                 // Detector position (opposite side of rotation axis)
-                double detX = -params_.D * cos(phi) + Y * sin(phi);
-                double detY = -params_.D * sin(phi) - Y * cos(phi);
+                // Detector center radius relative to origin (treat params_.D as source-to-detector)
+                double detCenterRadius = params_.D + params_.d; // could be negative (detector past origin)
+                double detX = detCenterRadius * cos(phi) + Y * sin(phi);
+                double detY = detCenterRadius * sin(phi) - Y * cos(phi);
                 double detZ = Z;
+
 
                 // Compute line integral (Eq. 4)
                 projections[angleIdx][row][col] =
@@ -202,7 +205,7 @@ void FDKReconstructor::backproject(
     // Reconstruction grid (assume centered at origin)
 
     for (int iz = 0; iz < nz; iz++) {
-        double gridSpacing = 1;
+        double gridSpacing = 0.404;
         double z = (iz - nz/2.0) * gridSpacing;
 
         for (int iy = 0; iy < ny; iy++) {
