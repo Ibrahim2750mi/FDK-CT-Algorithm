@@ -12,6 +12,8 @@ struct GeometryParams {
     int numDetectorCols;    // Number of detector columns (Y direction)
     double detectorSpacing; // Spacing between detector pixels
     int numAngles;          // Number of projection angles
+
+    double h;
 };
 
 class FDKReconstructor {

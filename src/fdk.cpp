@@ -1,6 +1,7 @@
 #include "../include/fdk.h"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 
 const double PI = 3.14159265358979323846;
 
@@ -25,7 +26,7 @@ FDKReconstructor::generateProjections(const Phantom& phantom) {
         // Source position (rotates around z-axis)
         double srcX = params_.d * cos(phi);
         double srcY = params_.d * sin(phi);
-        double srcZ = 0.0;
+        double srcZ = params_.h * phi;
 
         for (int row = 0; row < params_.numDetectorRows; row++) {
             for (int col = 0; col < params_.numDetectorCols; col++) {
@@ -39,7 +40,7 @@ FDKReconstructor::generateProjections(const Phantom& phantom) {
                 double detCenterRadius = params_.D + params_.d; // could be negative (detector past origin)
                 double detX = detCenterRadius * cos(phi) + Y * sin(phi);
                 double detY = detCenterRadius * sin(phi) - Y * cos(phi);
-                double detZ = Z;
+                double detZ = (params_.h * phi + Z);
 
 
                 // Compute line integral (Eq. 4)
@@ -223,22 +224,27 @@ void FDKReconstructor::backproject(
                     // Source position
                     double srcX = params_.d * cos(phi);
                     double srcY = params_.d * sin(phi);
+                    double srcZ = params_.h * phi;
 
                     // Vector from source to reconstruction point
                     double rx = x - srcX;
                     double ry = y - srcY;
-                    double rz = z;
+                    double rz = z - srcZ;
 
                     // Unit vector along x-hat direction (from source to axis)
                     double xhatX = -cos(phi);
                     double xhatY = -sin(phi);
 
-                    // Distance weighting factor: d^2 / (d + r·x̂)^2 (Eq. 28)
+                    // Distance weighting factor
                     double r_dot_xhat = rx * xhatX + ry * xhatY;
                     double U = params_.d + r_dot_xhat;
+
+                    // Check if point is visible from this source position
+                    // if (U <= 0) continue;  // Behind the source
+
                     double weight = (params_.d * params_.d) / (U * U);
 
-                    // Project point onto detector (Eq. 29, 30)
+                    // Project point onto detector
                     double Y = (params_.d / U) * (rx * sin(phi) - ry * cos(phi));
                     double Z = (params_.d / U) * rz;
 
@@ -265,10 +271,13 @@ void FDKReconstructor::backproject(
                     }
                 }
 
-                // Normalization factor from Eq. 28
-                volume[iz][iy][ix] = sum / (4.0 * PI * PI) *
-                                    (2.0 * PI / params_.numAngles);
+                volume[iz][iy][ix] = sum / (2.0 * PI * params_.numAngles);
             }
+        }
+
+        // Progress indicator
+        if ((iz + 1) % 10 == 0) {
+            std::cout << "  Slice " << (iz + 1) << "/" << nz << std::endl;
         }
     }
 }
