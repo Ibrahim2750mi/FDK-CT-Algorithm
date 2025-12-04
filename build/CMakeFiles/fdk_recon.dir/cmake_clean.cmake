@@ -3,8 +3,6 @@ file(REMOVE_RECURSE
   "CMakeFiles/fdk_recon.dir/src/fdk.cpp.o.d"
   "CMakeFiles/fdk_recon.dir/src/main.cpp.o"
   "CMakeFiles/fdk_recon.dir/src/main.cpp.o.d"
-  "CMakeFiles/fdk_recon.dir/src/phantom.cpp.o"
-  "CMakeFiles/fdk_recon.dir/src/phantom.cpp.o.d"
   "fdk_recon"
   "fdk_recon.pdb"
 )

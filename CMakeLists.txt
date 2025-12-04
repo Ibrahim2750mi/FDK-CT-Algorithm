@@ -9,7 +9,7 @@ pkg_check_modules(FFTW REQUIRED fftw3)
 add_executable(fdk_recon
         src/main.cpp
         src/fdk.cpp
-        src/phantom.cpp
+#        src/phantom.cpp
 )
 
 target_include_directories(fdk_recon PRIVATE ${FFTW_INCLUDE_DIRS})

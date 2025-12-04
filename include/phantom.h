@@ -13,7 +13,7 @@ struct Ellipsoid {
 class Phantom {
 public:
     Phantom();
-    double getDensity(double x, double y, double z) const;
+    virtual Phantom(double x, double y, double z) const;
 
 private:
     std::vector<Ellipsoid> ellipsoids;

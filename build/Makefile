@@ -177,30 +177,6 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/fdk_recon.dir/build.make CMakeFiles/fdk_recon.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
-src/phantom.o: src/phantom.cpp.o
-.PHONY : src/phantom.o
-
-# target to build an object file
-src/phantom.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/fdk_recon.dir/build.make CMakeFiles/fdk_recon.dir/src/phantom.cpp.o
-.PHONY : src/phantom.cpp.o
-
-src/phantom.i: src/phantom.cpp.i
-.PHONY : src/phantom.i
-
-# target to preprocess a source file
-src/phantom.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/fdk_recon.dir/build.make CMakeFiles/fdk_recon.dir/src/phantom.cpp.i
-.PHONY : src/phantom.cpp.i
-
-src/phantom.s: src/phantom.cpp.s
-.PHONY : src/phantom.s
-
-# target to generate assembly for a file
-src/phantom.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/fdk_recon.dir/build.make CMakeFiles/fdk_recon.dir/src/phantom.cpp.s
-.PHONY : src/phantom.cpp.s
-
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -216,9 +192,6 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
-	@echo "... src/phantom.o"
-	@echo "... src/phantom.i"
-	@echo "... src/phantom.s"
 .PHONY : help
 
 
