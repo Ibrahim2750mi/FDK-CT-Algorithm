@@ -4,7 +4,6 @@
 #include <cmath>
 #include <algorithm>
 #include <complex>
-#include <fftw3.h>
 #include <iostream>
 #include <iomanip>
 
@@ -143,27 +142,79 @@ void FDKReconstructor::cosineWeight(std::vector<std::vector<double>>& projection
 }
 
 void fft1d(std::vector<std::complex<double>>& data, const bool inverse) {
-    int N = data.size();
-    auto* in = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
-    auto* out = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
+    const std::size_t N = data.size();
+    if (N == 0) return;
 
-    for (int i = 0; i < N; i++) {
-        in[i][0] = data[i].real();
-        in[i][1] = data[i].imag();
+    // --- (Optional) check: N should be a power of 2 for this implementation ---
+    if ((N & (N - 1)) != 0) {
+        // Not a power of two: you can either handle it with a slow O(N^2) DFT
+        // or assert/throw. For now we'll just do a naive DFT fallback.
+        std::vector<std::complex<double>> out(N);
+        const double sign = inverse ? 1.0 : -1.0;
+        const double PI = 3.14159265358979323846;
+
+        for (std::size_t k = 0; k < N; ++k) {
+            std::complex<double> sum(0.0, 0.0);
+            for (std::size_t n = 0; n < N; ++n) {
+                double angle = 2.0 * PI * k * n / static_cast<double>(N);
+                std::complex<double> w(std::cos(sign * angle),
+                                       std::sin(sign * angle));
+                sum += data[n] * w;
+            }
+            out[k] = sum;
+        }
+
+        double norm = inverse ? (1.0 / static_cast<double>(N)) : 1.0;
+        for (std::size_t k = 0; k < N; ++k) {
+            data[k] = out[k] * norm;
+        }
+        return;
     }
 
-    int direction = inverse ? FFTW_BACKWARD : FFTW_FORWARD;
-    fftw_plan plan = fftw_plan_dft_1d(N, in, out, direction, FFTW_ESTIMATE);
-    fftw_execute(plan);
+    // --- Bit-reversal permutation ---
+    std::size_t logN = 0;
+    while ((1u << logN) < N) ++logN;
 
-    double norm = inverse ? (1.0 / N) : 1.0;
-    for (int i = 0; i < N; i++) {
-        data[i] = std::complex<double>(out[i][0] * norm, out[i][1] * norm);
+    for (std::size_t i = 1, j = 0; i < N; ++i) {
+        std::size_t bit = N >> 1;
+        for (; j & bit; bit >>= 1) {
+            j ^= bit;
+        }
+        j ^= bit;
+        if (i < j) {
+            std::swap(data[i], data[j]);
+        }
     }
 
-    fftw_destroy_plan(plan);
-    fftw_free(in);
-    fftw_free(out);
+    const double PI = 3.14159265358979323846;
+    // FFTW convention: forward uses exp(-2πikn/N), backward uses exp(+2πikn/N)
+    const double sign = inverse ? 1.0 : -1.0;
+
+    // --- Iterative Cooley–Tukey FFT ---
+    for (std::size_t len = 2; len <= N; len <<= 1) {
+        double angle = 2.0 * PI / static_cast<double>(len) * sign;
+        std::complex<double> wlen(std::cos(angle), std::sin(angle));
+
+        for (std::size_t i = 0; i < N; i += len) {
+            std::complex<double> w(1.0, 0.0);
+            std::size_t half = len >> 1;
+            for (std::size_t j = 0; j < half; ++j) {
+                std::complex<double> u = data[i + j];
+                std::complex<double> v = data[i + j + half] * w;
+                data[i + j]         = u + v;
+                data[i + j + half]  = u - v;
+                w *= wlen;
+            }
+        }
+    }
+
+    // --- Normalization (match your FFTW wrapper) ---
+    if (inverse) {
+        double norm = 1.0 / static_cast<double>(N);
+        for (auto& x : data) {
+            x *= norm;
+        }
+    }
 }
 
 void FDKReconstructor::filterProjection(std::vector<std::vector<double>>& projection) {
