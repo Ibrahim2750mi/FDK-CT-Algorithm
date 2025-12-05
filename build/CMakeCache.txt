@@ -236,6 +236,9 @@ HelicalCT_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 HelicalCT_SOURCE_DIR:STATIC=/home/hp/CLionProjects/fdkct
 
+//The directory containing a CMake configuration file for OpenCV.
+OpenCV_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/opencv4
+
 //CXX compiler flags for OpenMP parallelization
 OpenMP_CXX_FLAGS:STRING=-fopenmp
 
@@ -448,6 +451,8 @@ FFTW_fftw3_INCLUDEDIR:INTERNAL=
 FFTW_fftw3_LIBDIR:INTERNAL=
 FFTW_fftw3_PREFIX:INTERNAL=
 FFTW_fftw3_VERSION:INTERNAL=
+//Details about finding OpenCV
+FIND_PACKAGE_MESSAGE_DETAILS_OpenCV:INTERNAL=[/usr][v4.6.0()]
 //Details about finding OpenMP
 FIND_PACKAGE_MESSAGE_DETAILS_OpenMP:INTERNAL=[TRUE][TRUE][c ][v4.5()]
 //Details about finding OpenMP_C

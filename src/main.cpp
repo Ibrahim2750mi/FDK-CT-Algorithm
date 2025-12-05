@@ -1,156 +1,245 @@
 #include "../include/fdk.h"
+
+#include <opencv2/opencv.hpp>
+
 #include <cmath>
 #include <iostream>
 #include <fstream>
 #include <chrono>
 #include <iomanip>
+#include <vector>
+#include <string>
+#include <stdexcept>
 
 // ============================================================================
-// EXACT Python Phantom Implementation
+// Load projections from PNG images
+// pattern: printf-style pattern, e.g. "projections/proj_%03d.png"
+// numAngles: number of projection images / views
+// Returns: projections[angle][row][col] as double
 // ============================================================================
-class PythonPhantom : public Phantom {
-public:
-    PythonPhantom() {
-        std::cout << "PythonPhantom created (exact match to Python)" << std::endl;
-    }
+std::vector<std::vector<std::vector<double>>>
+loadProjectionsFromPNGs(const std::string& pattern,
+                        int numAngles,
+                        int& outRows,
+                        int& outCols)
+{
+    std::vector<std::vector<std::vector<double>>> projections;
+    projections.reserve(numAngles);
 
-    double getDensity(double x, double y, double z) const override {
-        // x, y, z are in NORMALIZED coordinates [-1, 1]
-        double density = 0.0;
+    outRows = 0;
+    outCols = 0;
 
-        // Central sphere (radius 0.5)
-        double r1 = sqrt(x*x + y*y + z*z);
-        if (r1 < 0.5) {
-            density += 1.0 * (1.0 - (r1/0.5)*(r1/0.5));
+    char filename[512];
+
+    for (int a = 0; a < numAngles; ++a) {
+        std::snprintf(filename, sizeof(filename), pattern.c_str(), a);
+        std::string fname(filename);
+
+        std::cout << "Loading projection " << a << ": " << fname << std::endl;
+
+        // Read as grayscale (keep depth)
+        cv::Mat img = cv::imread(fname, cv::IMREAD_UNCHANGED);
+        if (img.empty()) {
+            throw std::runtime_error("Failed to load image: " + fname);
         }
 
-        // Right sphere (radius 0.2)
-        double r2 = sqrt((x-0.6)*(x-0.6) + y*y + z*z);
-        if (r2 < 0.2) {
-            density += 0.8 * (1.0 - (r2/0.2)*(r2/0.2));
+        if (img.channels() > 1) {
+            cv::cvtColor(img, img, cv::COLOR_BGR2GRAY);
         }
 
-        // Left sphere (radius 0.2)
-        double r3 = sqrt((x+0.6)*(x+0.6) + y*y + z*z);
-        if (r3 < 0.2) {
-            density += 0.6 * (1.0 - (r3/0.2)*(r3/0.2));
-        }
+        // Convert to double
+        cv::Mat img64;
+        img.convertTo(img64, CV_64F);
 
-        // Top sphere (radius 0.15)
-        double r4 = sqrt(x*x + (y-0.6)*(y-0.6) + z*z);
-        if (r4 < 0.15) {
-            density += 0.4 * (1.0 - (r4/0.15)*(r4/0.15));
-        }
-
-        // Bottom sphere (radius 0.15)
-        double r5 = sqrt(x*x + (y+0.6)*(y+0.6) + z*z);
-        if (r5 < 0.15) {
-            density += 0.3 * (1.0 - (r5/0.15)*(r5/0.15));
-        }
-
-        return density;
-    }
-};
-
-// ============================================================================
-// Save results for Python comparison
-// ============================================================================
-void saveSlice(const std::vector<std::vector<double>>& slice,
-               const std::string& filename) {
-    std::ofstream file(filename);
-    int N = slice.size();
-
-    for (int y = 0; y < N; y++) {
-        for (int x = 0; x < N; x++) {
-            file << slice[y][x] << " ";
-        }
-        file << "\n";
-    }
-    file.close();
-    std::cout << "Saved " << filename << " (" << N << "x" << N << ")" << std::endl;
-}
-
-// ============================================================================
-// Debug: Test single ray through phantom
-// ============================================================================
-void testSingleRay(const PythonPhantom& phantom) {
-    std::cout << "\n=== TESTING SINGLE RAY ===" << std::endl;
-
-    // Simple ray through center
-    double sx = 400.0, sy = 0.0, sz = 0.0;  // Source at (d, 0, 0)
-    double dx = -400.0, dy = 0.0, dz = 0.0; // Detector at (-d, 0, 0)
-
-    std::cout << "Source: (" << sx << ", " << sy << ", " << sz << ")" << std::endl;
-    std::cout << "Detector: (" << dx << ", " << dy << ", " << dz << ")" << std::endl;
-
-    // Ray direction
-    double vx = dx - sx;
-    double vy = dy - sy;
-    double vz = dz - sz;
-    double L = sqrt(vx*vx + vy*vy + vz*vz);
-    vx /= L; vy /= L; vz /= L;
-
-    std::cout << "Ray direction: (" << vx << ", " << vy << ", " << vz << ")" << std::endl;
-    std::cout << "Ray length: " << L << " mm" << std::endl;
-
-    // Sample along ray
-    double sum = 0.0;
-    int steps = 800;
-    double dt = L / steps;
-
-    std::cout << "\nSampling " << steps << " points along ray:" << std::endl;
-
-    int nonzero_count = 0;
-    for (int i = 0; i < steps; i++) {
-        double t = i * dt;
-        double x = sx + t * vx;
-        double y = sy + t * vy;
-        double z = sz + t * vz;
-
-        // Normalize to [-1, 1]
-        double xn = x / 100.0;
-        double yn = y / 100.0;
-        double zn = z / 100.0;
-
-        double density = phantom.getDensity(xn, yn, zn);
-
-        if (density > 0.0) {
-            nonzero_count++;
-            if (nonzero_count <= 5) {  // Print first 5 non-zero samples
-                std::cout << "  Step " << i << ": pos=(" << x << "," << y << "," << z
-                          << ") normalized=(" << xn << "," << yn << "," << zn
-                          << ") density=" << density << std::endl;
+        if (a == 0) {
+            outRows = img64.rows;
+            outCols = img64.cols;
+            std::cout << "Detected detector size from first image: "
+                      << outCols << " x " << outRows << std::endl;
+        } else {
+            if (img64.rows != outRows || img64.cols != outCols) {
+                throw std::runtime_error("Inconsistent image size at angle "
+                                         + std::to_string(a));
             }
         }
 
-        sum += density * dt;
+        // Copy into std::vector structure [row][col]
+        std::vector<std::vector<double>> angle(outRows,
+                                               std::vector<double>(outCols, 0.0));
+        for (int r = 0; r < outRows; ++r) {
+            const double* rowPtr = img64.ptr<double>(r);
+            for (int c = 0; c < outCols; ++c) {
+                angle[r][c] = rowPtr[c];
+            }
+        }
+
+        projections.push_back(std::move(angle));
     }
 
-    std::cout << "Non-zero samples: " << nonzero_count << "/" << steps << std::endl;
-    std::cout << "Line integral: " << sum << std::endl;
+    std::cout << "Loaded " << projections.size() << " projections." << std::endl;
+    return projections;
 }
 
-int main() {
+// ============================================================================
+// Save full 3D volume as RAW (float32), layout: z-major, then y, then x
+// volume[z][y][x]
+// ============================================================================
+void saveRawVolume(const std::vector<std::vector<std::vector<double>>>& volume,
+                   const std::string& filename)
+{
+    if (volume.empty() || volume[0].empty() || volume[0][0].empty()) {
+        std::cerr << "Volume is empty, not saving RAW." << std::endl;
+        return;
+    }
+
+    int Nz = static_cast<int>(volume.size());
+    int Ny = static_cast<int>(volume[0].size());
+    int Nx = static_cast<int>(volume[0][0].size());
+
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) {
+        std::cerr << "Failed to open " << filename << " for writing." << std::endl;
+        return;
+    }
+
+    for (int z = 0; z < Nz; ++z) {
+        for (int y = 0; y < Ny; ++y) {
+            for (int x = 0; x < Nx; ++x) {
+                float v = static_cast<float>(volume[z][y][x]);
+                out.write(reinterpret_cast<const char*>(&v), sizeof(float));
+            }
+        }
+    }
+
+    out.close();
+    std::cout << "Saved RAW volume to " << filename
+              << " (" << Nz << " x " << Ny << " x " << Nx
+              << ", float32)" << std::endl;
+}
+
+// ============================================================================
+// Save all axial slices (z = const planes) as PNG
+// Filenames: pattern with %03d, e.g. "axial_%03d.png"
+// Each slice is normalized independently to [0,255]
+// ============================================================================
+void saveAxialSlicesAsPNG(const std::vector<std::vector<std::vector<double>>>& volume,
+                          const std::string& pattern)
+{
+    if (volume.empty() || volume[0].empty() || volume[0][0].empty()) {
+        std::cerr << "Volume is empty, not saving PNG slices." << std::endl;
+        return;
+    }
+
+    int Nz = static_cast<int>(volume.size());
+    int Ny = static_cast<int>(volume[0].size());
+    int Nx = static_cast<int>(volume[0][0].size());
+
+    char filename[256];
+
+    for (int z = 0; z < Nz; ++z) {
+        cv::Mat img(Ny, Nx, CV_32F);
+
+        // Copy slice z into img
+        for (int y = 0; y < Ny; ++y) {
+            float* rowPtr = img.ptr<float>(y);
+            for (int x = 0; x < Nx; ++x) {
+                rowPtr[x] = static_cast<float>(volume[z][y][x]);
+            }
+        }
+
+        // Normalize to [0,255] for visualization
+        double mn, mx;
+        cv::minMaxLoc(img, &mn, &mx);
+
+        cv::Mat imgNorm;
+        if (mx > mn) {
+            imgNorm = (img - mn) / (mx - mn);
+            imgNorm *= 255.0;
+        } else {
+            imgNorm = cv::Mat::zeros(img.size(), CV_32F);
+        }
+
+        cv::Mat img8;
+        imgNorm.convertTo(img8, CV_8U);
+
+        std::snprintf(filename, sizeof(filename), pattern.c_str(), z);
+        std::string fname(filename);
+
+        if (!cv::imwrite(fname, img8)) {
+            std::cerr << "Failed to write PNG slice: " << fname << std::endl;
+        } else {
+            std::cout << "Saved axial slice " << z << " -> " << fname << std::endl;
+        }
+    }
+
+    std::cout << "Saved " << Nz << " axial PNG slices." << std::endl;
+}
+
+int main(int argc, char** argv) {
     std::cout << "==========================================" << std::endl;
-    std::cout << "DEBUG FDK TEST" << std::endl;
+    std::cout << "HELICAL FDK RECONSTRUCTION (PNG INPUT)" << std::endl;
     std::cout << "==========================================" << std::endl;
 
-    // Use small parameters for quick test
+    if (argc < 3) {
+        std::cout << "Usage: " << argv[0]
+                  << " <projection_pattern> <num_angles>\n"
+                  << "Example: " << argv[0]
+                  << " projections/proj_%03d.png 90\n";
+        return 1;
+    }
+
+    std::string projectionPattern = argv[1];
+    int numAngles = std::stoi(argv[2]);
+
+    // -------------------------------
+    // Set geometry parameters
+    // -------------------------------
     GeometryParams params;
-    params.d = 400.0;           // source → iso
-    params.sdd = 800.0;         // source → detector
 
-    double pitch_per_rotation = 40.0;   // mm
-    params.h = pitch_per_rotation / (2 * M_PI);
+    // Basic helical geometry (you can tune these to match your scanner / sim)
+    params.d   = 400.0;  // source-to-iso (SID)
+    params.sdd = 800.0;  // source-to-detector (SDD)
 
-    params.numDetectorCols = 256;
-    params.numDetectorRows = 64;
+    double pitch_per_rotation = 40.0;   // mm per 2π
+    params.h = pitch_per_rotation / (2 * M_PI);  // mm / rad
+
+    params.numAngles = numAngles;
+
+    // Detector spacing (mm) – adjust to match your data
     params.detectorSpacing = 2.0;
-    params.numAngles = 90;
-    params.reconSize = 64;
+
+    // Reconstruction volume
+    params.reconSize    = 64;
     params.reconSpacing = 3.125;
 
-    params.helicalPitch = 2 * M_PI * params.h;
+    // We'll set numDetectorRows/Cols after we inspect first image.
+    int detRows = 0, detCols = 0;
+
+    // -------------------------------
+    // Load projections from PNGs
+    // -------------------------------
+    auto io_start = std::chrono::high_resolution_clock::now();
+
+    std::vector<std::vector<std::vector<double>>> projections;
+    try {
+        projections = loadProjectionsFromPNGs(projectionPattern,
+                                              numAngles,
+                                              detRows,
+                                              detCols);
+    } catch (const std::exception& e) {
+        std::cerr << "Error while loading projections: " << e.what() << std::endl;
+        return 1;
+    }
+
+    auto io_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> io_time = io_end - io_start;
+    std::cout << "Projection loading time: " << io_time.count() << " s" << std::endl;
+
+    // Now we know detector size
+    params.numDetectorRows = detRows;
+    params.numDetectorCols = detCols;
+
+    params.helicalPitch    = 2 * M_PI * params.h;
     params.detectorColSize = params.numDetectorCols * params.detectorSpacing;
     params.detectorRowSize = params.numDetectorRows * params.detectorSpacing;
 
@@ -158,39 +247,16 @@ int main() {
     std::cout << "  d (SID): " << params.d << " mm" << std::endl;
     std::cout << "  sdd (SDD): " << params.sdd << " mm" << std::endl;
     std::cout << "  h: " << params.h << " mm/rad" << std::endl;
+    std::cout << "  Helical pitch (per rotation): " << params.helicalPitch << " mm" << std::endl;
     std::cout << "  Detector: " << params.numDetectorCols << " x " << params.numDetectorRows << std::endl;
     std::cout << "  Detector spacing: " << params.detectorSpacing << " mm" << std::endl;
     std::cout << "  Recon volume: " << params.reconSize << "^3" << std::endl;
     std::cout << "  Recon spacing: " << params.reconSpacing << " mm" << std::endl;
     std::cout << "  FOV: " << params.reconSize * params.reconSpacing << " mm" << std::endl;
 
-    // Create phantom
-    PythonPhantom phantom;
-
-    // Test phantom sampling
-    std::cout << "\n=== TESTING PHANTOM SAMPLING ===" << std::endl;
-    std::cout << "Center (0,0,0): " << phantom.getDensity(0,0,0) << std::endl;
-    std::cout << "Right sphere center (0.6,0,0): " << phantom.getDensity(0.6,0,0) << std::endl;
-    std::cout << "Left sphere center (-0.6,0,0): " << phantom.getDensity(-0.6,0,0) << std::endl;
-    std::cout << "Outside (1,0,0): " << phantom.getDensity(1,0,0) << std::endl;
-
-    // Test single ray
-    testSingleRay(phantom);
-
-    // Create reconstructor
-    FDKReconstructor reconstructor(params);
-
-    auto start = std::chrono::high_resolution_clock::now();
-
-    // Generate projections
-    std::cout << "\n=== GENERATING PROJECTIONS ===" << std::endl;
-    auto projections = reconstructor.generateProjections(phantom);
-
-    auto mid = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> proj_time = mid - start;
-    std::cout << "Projection time: " << proj_time.count() << "s" << std::endl;
-
-    // Detailed projection statistics
+    // -------------------------------
+    // Projection statistics
+    // -------------------------------
     std::cout << "\n=== PROJECTION STATISTICS ===" << std::endl;
     double minProj = 1e100, maxProj = -1e100, sumProj = 0.0;
     int nonzero_pixels = 0;
@@ -202,7 +268,7 @@ int main() {
                 minProj = std::min(minProj, val);
                 maxProj = std::max(maxProj, val);
                 sumProj += val;
-                if (val > 1e-10) nonzero_pixels++;
+                if (std::fabs(val) > 1e-10) nonzero_pixels++;
                 total_pixels++;
             }
         }
@@ -214,54 +280,35 @@ int main() {
     std::cout << "Non-zero pixels: " << nonzero_pixels << "/" << total_pixels
               << " (" << (100.0 * nonzero_pixels / total_pixels) << "%)" << std::endl;
 
-    // Save first projection
-    if (!projections.empty()) {
-        std::ofstream projFile("first_projection.txt");
-        int rows = projections[0].size();
-        int cols = projections[0][0].size();
-
-        std::cout << "\nFirst projection sample (center region):" << std::endl;
-        int centerRow = rows / 2;
-        int centerCol = cols / 2;
-        for (int r = centerRow - 2; r <= centerRow + 2; r++) {
-            for (int c = centerCol - 2; c <= centerCol + 2; c++) {
-                std::cout << std::setw(10) << std::setprecision(4) << projections[0][r][c] << " ";
-            }
-            std::cout << std::endl;
-        }
-
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                projFile << projections[0][r][c] << " ";
-            }
-            projFile << "\n";
-        }
-        projFile.close();
-        std::cout << "\nSaved first_projection.txt (" << rows << "x" << cols << ")" << std::endl;
-    }
-
     if (maxProj < 1e-10) {
-        std::cout << "\n*** ERROR: All projections are zero! ***" << std::endl;
-        std::cout << "This indicates a problem with the forward projection geometry." << std::endl;
+        std::cout << "\n*** ERROR: All projections are ~zero! ***" << std::endl;
+        std::cout << "Check that the PNG images contain the expected data "
+                  << "(log-intensities / line integrals)." << std::endl;
         return 1;
     }
 
-    // Reconstruct
+    // -------------------------------
+    // Reconstruction
+    // -------------------------------
     std::cout << "\n=== RECONSTRUCTING ===" << std::endl;
+    auto recon_start = std::chrono::high_resolution_clock::now();
+
+    FDKReconstructor reconstructor(params);
     auto volume = reconstructor.reconstruct(projections);
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> recon_time = end - mid;
-    std::chrono::duration<double> total_time = end - start;
+    auto recon_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> recon_time = recon_end - recon_start;
 
     std::cout << "\nTiming:" << std::endl;
-    std::cout << "  Projections: " << proj_time.count() << "s" << std::endl;
-    std::cout << "  Reconstruction: " << recon_time.count() << "s" << std::endl;
-    std::cout << "  Total: " << total_time.count() << "s" << std::endl;
+    std::cout << "  Projection loading: " << io_time.count() << " s" << std::endl;
+    std::cout << "  Reconstruction:     " << recon_time.count() << " s" << std::endl;
+    std::cout << "  Total:              " << (io_time + recon_time).count() << " s" << std::endl;
 
+    // -------------------------------
     // Volume statistics
+    // -------------------------------
     std::cout << "\n=== VOLUME STATISTICS ===" << std::endl;
-    int N = volume.size();
+    int N = static_cast<int>(volume.size());
     double minVal = 1e100, maxVal = -1e100, sum = 0.0;
     int nonzero_voxels = 0;
 
@@ -271,57 +318,25 @@ int main() {
                 if (val < minVal) minVal = val;
                 if (val > maxVal) maxVal = val;
                 sum += val;
-                if (fabs(val) > 1e-10) nonzero_voxels++;
+                if (std::fabs(val) > 1e-10) nonzero_voxels++;
             }
         }
     }
 
     std::cout << "Volume min: " << minVal << std::endl;
     std::cout << "Volume max: " << maxVal << std::endl;
-    std::cout << "Volume mean: " << sum/(N*N*N) << std::endl;
-    std::cout << "Non-zero voxels: " << nonzero_voxels << "/" << (N*N*N) << std::endl;
+    std::cout << "Volume mean: " << sum / (N * N * N) << std::endl;
+    std::cout << "Non-zero voxels: " << nonzero_voxels
+              << "/" << (N * N * N) << std::endl;
 
-    // Sample center slice
-    int midZ = N / 2;
-    std::cout << "\nCenter XY slice sample:" << std::endl;
-    for (int y = N/2 - 2; y <= N/2 + 2; y++) {
-        for (int x = N/2 - 2; x <= N/2 + 2; x++) {
-            std::cout << std::setw(10) << std::setprecision(4) << volume[midZ][y][x] << " ";
-        }
-        std::cout << std::endl;
-    }
+    // -------------------------------
+    // Save outputs: RAW volume + axial PNG slices
+    // -------------------------------
+    saveRawVolume(volume, "recon_volume.raw");
+    saveAxialSlicesAsPNG(volume, "axial_%03d.png");
 
-    // Save slices
-    int midY = N / 2;
-    int midX = N / 2;
-
-    std::vector<std::vector<double>> xySlice(N, std::vector<double>(N));
-    std::vector<std::vector<double>> xzSlice(N, std::vector<double>(N));
-    std::vector<std::vector<double>> yzSlice(N, std::vector<double>(N));
-
-    for (int y = 0; y < N; y++) {
-        for (int x = 0; x < N; x++) {
-            xySlice[y][x] = volume[midZ][y][x];
-        }
-    }
-
-    for (int z = 0; z < N; z++) {
-        for (int x = 0; x < N; x++) {
-            xzSlice[z][x] = volume[z][midY][x];
-        }
-    }
-
-    for (int z = 0; z < N; z++) {
-        for (int y = 0; y < N; y++) {
-            yzSlice[z][y] = volume[z][y][midX];
-        }
-    }
-
-    saveSlice(xySlice, "cpp_xy_slice.txt");
-    saveSlice(xzSlice, "cpp_xz_slice.txt");
-    saveSlice(yzSlice, "cpp_yz_slice.txt");
-
-    std::cout << "\nDone! Check the debug output above for issues." << std::endl;
-
+    std::cout << "\nDone! Outputs:\n"
+              << "  - recon_volume.raw (float32, z-y-x)\n"
+              << "  - axial_###.png (axial slices)\n";
     return 0;
 }

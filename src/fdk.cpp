@@ -1,7 +1,7 @@
 #include "../include/fdk.h"
 #include <cmath>
+#include <complex>
 #include <iostream>
-#include <fftw3.h>
 
 static const double PI = 3.141592653589793;
 
@@ -176,45 +176,126 @@ void FDKReconstructor::cosineWeight(std::vector<std::vector<double>>& P)
 // ============================================================================
 // Ramp filter via FFT
 // ============================================================================
+void fft1d(std::vector<std::complex<double>>& data, const bool inverse) {
+    const std::size_t N = data.size();
+    if (N == 0) return;
+
+    // --- (Optional) check: N should be a power of 2 for this implementation ---
+    if ((N & (N - 1)) != 0) {
+        // Not a power of two: you can either handle it with a slow O(N^2) DFT
+        // or assert/throw. For now we'll just do a naive DFT fallback.
+        std::vector<std::complex<double>> out(N);
+        const double sign = inverse ? 1.0 : -1.0;
+        const double PI = 3.14159265358979323846;
+
+        for (std::size_t k = 0; k < N; ++k) {
+            std::complex<double> sum(0.0, 0.0);
+            for (std::size_t n = 0; n < N; ++n) {
+                double angle = 2.0 * PI * k * n / static_cast<double>(N);
+                std::complex<double> w(std::cos(sign * angle),
+                                       std::sin(sign * angle));
+                sum += data[n] * w;
+            }
+            out[k] = sum;
+        }
+
+        double norm = inverse ? (1.0 / static_cast<double>(N)) : 1.0;
+        for (std::size_t k = 0; k < N; ++k) {
+            data[k] = out[k] * norm;
+        }
+        return;
+    }
+
+    // --- Bit-reversal permutation ---
+    std::size_t logN = 0;
+    while ((1u << logN) < N) ++logN;
+
+    for (std::size_t i = 1, j = 0; i < N; ++i) {
+        std::size_t bit = N >> 1;
+        for (; j & bit; bit >>= 1) {
+            j ^= bit;
+        }
+        j ^= bit;
+        if (i < j) {
+            std::swap(data[i], data[j]);
+        }
+    }
+
+    const double PI = 3.14159265358979323846;
+    // FFTW convention: forward uses exp(-2πikn/N), backward uses exp(+2πikn/N)
+    const double sign = inverse ? 1.0 : -1.0;
+
+    // --- Iterative Cooley–Tukey FFT ---
+    for (std::size_t len = 2; len <= N; len <<= 1) {
+        double angle = 2.0 * PI / static_cast<double>(len) * sign;
+        std::complex<double> wlen(std::cos(angle), std::sin(angle));
+
+        for (std::size_t i = 0; i < N; i += len) {
+            std::complex<double> w(1.0, 0.0);
+            std::size_t half = len >> 1;
+            for (std::size_t j = 0; j < half; ++j) {
+                std::complex<double> u = data[i + j];
+                std::complex<double> v = data[i + j + half] * w;
+                data[i + j]         = u + v;
+                data[i + j + half]  = u - v;
+                w *= wlen;
+            }
+        }
+    }
+
+    // --- Normalization (match your FFTW wrapper) ---
+    if (inverse) {
+        double norm = 1.0 / static_cast<double>(N);
+        for (auto& x : data) {
+            x *= norm;
+        }
+    }
+}
+
+
+
 std::vector<double> FDKReconstructor::rampFilter(const std::vector<double>& sig) const
 {
-    int N = sig.size();
+    int N = static_cast<int>(sig.size());
+    if (N == 0) return {};
+
+    // M is next power of two >= 2N
     int M = 1;
     while (M < 2 * N) M <<= 1;
 
-    fftw_complex *in  = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*M);
-    fftw_complex *out = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*M);
-
-    for (int i = 0; i < M; i++)
-    {
-        in[i][0] = (i < N ? sig[i] : 0);
-        in[i][1] = 0.0;
+    // Prepare complex buffer with zero-padding
+    std::vector<std::complex<double>> buf(M);
+    for (int i = 0; i < N; ++i) {
+        buf[i] = std::complex<double>(sig[i], 0.0);
+    }
+    for (int i = N; i < M; ++i) {
+        buf[i] = std::complex<double>(0.0, 0.0);
     }
 
-    fftw_plan planF = fftw_plan_dft_1d(M, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-    fftw_execute(planF);
+    // Forward FFT (no scaling inside fft1d for forward)
+    fft1d(buf, /*inverse=*/false);
 
-    for (int k = 0; k < M; k++)
-    {
-        double omega = (k <= M/2)
-                        ? (2*PI*k / (M*params_.detectorSpacing))
-                        : (2*PI*(k-M) / (M*params_.detectorSpacing));
+    // Apply ramp filter in frequency domain
+    for (int k = 0; k < M; ++k) {
+        double omega;
+        if (k <= M / 2) {
+            omega = 2.0 * PI * k / (M * params_.detectorSpacing);
+        } else {
+            omega = 2.0 * PI * (k - M) / (M * params_.detectorSpacing);
+        }
 
-        double H = fabs(omega);
-        out[k][0] *= H;
-        out[k][1] *= H;
+        double H = std::abs(omega);  // |ω| ramp
+        buf[k] *= H;
     }
 
-    fftw_plan planB = fftw_plan_dft_1d(M, out, in, FFTW_BACKWARD, FFTW_ESTIMATE);
-    fftw_execute(planB);
+    // Inverse FFT: our fft1d *already* divides by M
+    fft1d(buf, /*inverse=*/true);
 
+    // Extract real part (no extra /M, because inverse already normalized)
     std::vector<double> filtered(N);
-    for (int i = 0; i < N; i++)
-        filtered[i] = in[i][0] / M;
-
-    fftw_destroy_plan(planF);
-    fftw_destroy_plan(planB);
-    fftw_free(in); fftw_free(out);
+    for (int i = 0; i < N; ++i) {
+        filtered[i] = buf[i].real();
+    }
 
     return filtered;
 }
