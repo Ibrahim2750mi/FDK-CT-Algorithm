@@ -18,11 +18,11 @@ int main() {
     // Parameters from Table 1 (Fig. 5 setup)
     GeometryParams params;
     params.d = 60.0;
-    params.D = 60.0;
+    params.D = 120.0;
     params.numDetectorRows = 39;
     params.numDetectorCols = 65;
     params.detectorSpacing = 1;
-    params.numAngles = 32;
+    params.numAngles = 128;
 
     std::cout << "Creating phantom..." << std::endl;
     Phantom phantom;

@@ -1,16 +1,34 @@
+// FDK IMPLEMENTATION WITH EXTENSIVE DEBUG OUTPUT
+
 #include "../include/fdk.h"
 #include <cmath>
 #include <algorithm>
+#include <complex>
+#include <fftw3.h>
+#include <iostream>
+#include <iomanip>
 
 const double PI = 3.14159265358979323846;
 
 FDKReconstructor::FDKReconstructor(const GeometryParams& params)
-    : params_(params) {}
+    : params_(params) {
+    std::cout << "\n=== FDK Reconstructor Initialized ===" << std::endl;
+    std::cout << "d (source-to-axis): " << params_.d << std::endl;
+    std::cout << "D (source-to-detector): " << params_.D << std::endl;
+    std::cout << "Detector rows x cols: " << params_.numDetectorRows << " x " << params_.numDetectorCols << std::endl;
+    std::cout << "Detector spacing: " << params_.detectorSpacing << std::endl;
+    std::cout << "Number of angles: " << params_.numAngles << std::endl;
+
+    if (params_.D <= params_.d) {
+        std::cout << "WARNING: D <= d! Detector is at or behind rotation axis!" << std::endl;
+    }
+    std::cout << "Detector radius from axis: " << (params_.D - params_.d) << std::endl;
+}
 
 std::vector<std::vector<std::vector<double>>>
 FDKReconstructor::generateProjections(const Phantom& phantom) {
+    std::cout << "\n=== Generating Projections ===" << std::endl;
 
-    // projections[angle][row][col]
     std::vector<std::vector<std::vector<double>>> projections(
         params_.numAngles,
         std::vector<std::vector<double>>(
@@ -19,36 +37,59 @@ FDKReconstructor::generateProjections(const Phantom& phantom) {
         )
     );
 
+    double minProj = 1e10, maxProj = -1e10;
+    double sumProj = 0.0;
+    int countNonZero = 0;
+
     for (int angleIdx = 0; angleIdx < params_.numAngles; angleIdx++) {
         double phi = 2.0 * PI * angleIdx / params_.numAngles;
-
-        // Source position (rotates around z-axis)
         double srcX = params_.d * cos(phi);
         double srcY = params_.d * sin(phi);
         double srcZ = 0.0;
 
         for (int row = 0; row < params_.numDetectorRows; row++) {
             for (int col = 0; col < params_.numDetectorCols; col++) {
-
-                // Detector coordinates (Section 2, Fig 1)
                 double Y = (col - params_.numDetectorCols/2.0) * params_.detectorSpacing;
                 double Z = (row - params_.numDetectorRows/2.0) * params_.detectorSpacing;
 
-                // Detector position (opposite side of rotation axis)
-                // Detector center radius relative to origin (treat params_.D as source-to-detector)
-                double detCenterRadius = params_.D + params_.d; // could be negative (detector past origin)
-                double detX = detCenterRadius * cos(phi) + Y * sin(phi);
-                double detY = detCenterRadius * sin(phi) - Y * cos(phi);
-                double detZ = Z;
+                double detRadius = params_.D - params_.d;
+                double detCenterX = -detRadius * cos(phi);
+                double detCenterY = -detRadius * sin(phi);
+                double detCenterZ = 0.0;
 
+                double uX = -sin(phi);
+                double uY = cos(phi);
 
-                // Compute line integral (Eq. 4)
-                projections[angleIdx][row][col] =
-                    computeLineIntegral(phantom, srcX, srcY, srcZ,
-                                       detX, detY, detZ);
+                double detX = detCenterX + Y * uX;
+                double detY = detCenterY + Y * uY;
+                double detZ = detCenterZ + Z;
+
+                double val = computeLineIntegral(phantom, srcX, srcY, srcZ, detX, detY, detZ);
+                projections[angleIdx][row][col] = val;
+
+                minProj = std::min(minProj, val);
+                maxProj = std::max(maxProj, val);
+                sumProj += val;
+                if (val > 1e-6) countNonZero++;
             }
         }
     }
+
+    std::cout << "Projection statistics:" << std::endl;
+    std::cout << "  Min: " << minProj << std::endl;
+    std::cout << "  Max: " << maxProj << std::endl;
+    std::cout << "  Mean: " << sumProj / (params_.numAngles * params_.numDetectorRows * params_.numDetectorCols) << std::endl;
+    std::cout << "  Non-zero pixels: " << countNonZero << " / "
+              << (params_.numAngles * params_.numDetectorRows * params_.numDetectorCols) << std::endl;
+
+    // Debug: print one projection profile
+    std::cout << "\nCenter row of first projection (cols 25-40):" << std::endl;
+    int centerRow = params_.numDetectorRows / 2;
+    for (int col = 25; col < 40; col++) {
+        std::cout << std::setw(10) << std::fixed << std::setprecision(4)
+                  << projections[0][centerRow][col] << " ";
+    }
+    std::cout << std::endl;
 
     return projections;
 }
@@ -58,14 +99,12 @@ double FDKReconstructor::computeLineIntegral(
     double srcX, double srcY, double srcZ,
     double detX, double detY, double detZ) {
 
-    // Ray direction
     double dx = detX - srcX;
     double dy = detY - srcY;
     double dz = detZ - srcZ;
     double length = sqrt(dx*dx + dy*dy + dz*dz);
     dx /= length; dy /= length; dz /= length;
 
-    // Numerical integration along ray
     double integral = 0.0;
     int numSamples = 500;
     double stepSize = length / numSamples;
@@ -75,55 +114,48 @@ double FDKReconstructor::computeLineIntegral(
         double x = srcX + t * dx;
         double y = srcY + t * dy;
         double z = srcZ + t * dz;
-
         integral += phantom.getDensity(x, y, z) * stepSize;
     }
-
     return integral;
 }
 
-
 void FDKReconstructor::cosineWeight(std::vector<std::vector<double>>& projection) {
-    // From before Eq. 31: multiply by d / sqrt(d^2 + Y^2 + Z^2)
+    double minWeight = 1e10, maxWeight = -1e10;
 
     for (int row = 0; row < params_.numDetectorRows; row++) {
         for (int col = 0; col < params_.numDetectorCols; col++) {
-
             double Y = (col - params_.numDetectorCols/2.0) * params_.detectorSpacing;
             double Z = (row - params_.numDetectorRows/2.0) * params_.detectorSpacing;
+            double weight = params_.D / sqrt(params_.D * params_.D + Y * Y + Z * Z);
 
-            double weight = params_.d / sqrt(params_.d * params_.d +
-                                            Y * Y + Z * Z);
+            minWeight = std::min(minWeight, weight);
+            maxWeight = std::max(maxWeight, weight);
 
             projection[row][col] *= weight;
         }
     }
+
+    static bool firstTime = true;
+    if (firstTime) {
+        std::cout << "\nCosine weighting range: [" << minWeight << ", " << maxWeight << "]" << std::endl;
+        firstTime = false;
+    }
 }
-
-
-#include <complex>
-#include <vector>
-
-#include <fftw3.h>
 
 void fft1d(std::vector<std::complex<double>>& data, const bool inverse) {
     int N = data.size();
-
     auto* in = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
     auto* out = static_cast<fftw_complex *>(fftw_malloc(sizeof(fftw_complex) * N));
 
-    // Copy data to FFTW format
     for (int i = 0; i < N; i++) {
         in[i][0] = data[i].real();
         in[i][1] = data[i].imag();
     }
 
-    // Create plan and execute
     int direction = inverse ? FFTW_BACKWARD : FFTW_FORWARD;
     fftw_plan plan = fftw_plan_dft_1d(N, in, out, direction, FFTW_ESTIMATE);
     fftw_execute(plan);
 
-    // Copy results back
     double norm = inverse ? (1.0 / N) : 1.0;
     for (int i = 0; i < N; i++) {
         data[i] = std::complex<double>(out[i][0] * norm, out[i][1] * norm);
@@ -134,119 +166,138 @@ void fft1d(std::vector<std::complex<double>>& data, const bool inverse) {
     fftw_free(out);
 }
 
-void FDKReconstructor::filterProjection(
-    std::vector<std::vector<double>>& projection) {
-
-    // Eq. 32: Ramp filter in frequency domain
-    // Filter each row independently (Y direction)
+void FDKReconstructor::filterProjection(std::vector<std::vector<double>>& projection) {
+    static bool firstTime = true;
+    double minBefore = 1e10, maxBefore = -1e10;
+    double minAfter = 1e10, maxAfter = -1e10;
 
     for (int row = 0; row < params_.numDetectorRows; row++) {
         int N = params_.numDetectorCols;
-
-        // Pad to next power of 2 for FFT efficiency
         int paddedN = 1;
         while (paddedN < N) paddedN *= 2;
-        paddedN *= 2; // Extra padding to avoid wraparound
+        paddedN *= 2;
 
         std::vector<std::complex<double>> rowData(paddedN, 0.0);
-
-        // Copy row data
         for (int col = 0; col < N; col++) {
             rowData[col] = projection[row][col];
+            if (firstTime && row == params_.numDetectorRows/2) {
+                minBefore = std::min(minBefore, projection[row][col]);
+                maxBefore = std::max(maxBefore, projection[row][col]);
+            }
         }
 
-        // FFT
         fft1d(rowData, false);
 
-        // Apply ramp filter: |ω| (Eq. 16, 32)
-        double omega_max = PI / params_.detectorSpacing;
+        double deltaS = params_.detectorSpacing;
         for (int i = 0; i < paddedN; i++) {
-            double omega = (2.0 * PI * i) / (paddedN * params_.detectorSpacing);
-            if (i > paddedN/2) {
-                omega = (2.0 * PI * (i - paddedN)) / (paddedN * params_.detectorSpacing);
-            }
-
-            // Ramp filter with Shepp-Logan window (mentioned in paper)
-            double filter = fabs(omega);
-            if (omega != 0) {
-                filter *= fabs(sin(omega * params_.detectorSpacing / 2.0) /
-                              (omega * params_.detectorSpacing / 2.0));
-            }
-
-            // Bandlimit
-            if (fabs(omega) > omega_max) {
-                filter = 0.0;
-            }
-
-            rowData[i] *= filter;
+            int k = (i <= paddedN/2) ? i : (i - paddedN);
+            double freq = k / (paddedN * deltaS);
+            double H = std::abs(freq);
+            double fNyq = 1.0 / (2.0 * deltaS);
+            if (std::abs(freq) > fNyq) H = 0.0;
+            rowData[i] *= H;
         }
 
-        // Inverse FFT
         fft1d(rowData, true);
 
-        // Copy back
         for (int col = 0; col < N; col++) {
             projection[row][col] = rowData[col].real();
+            if (firstTime && row == params_.numDetectorRows/2) {
+                minAfter = std::min(minAfter, projection[row][col]);
+                maxAfter = std::max(maxAfter, projection[row][col]);
+            }
         }
     }
-}
 
+    if (firstTime) {
+        std::cout << "\nFilter effect on center row:" << std::endl;
+        std::cout << "  Before: [" << minBefore << ", " << maxBefore << "]" << std::endl;
+        std::cout << "  After:  [" << minAfter << ", " << maxAfter << "]" << std::endl;
+        firstTime = false;
+    }
+}
 
 void FDKReconstructor::backproject(
     const std::vector<std::vector<std::vector<double>>>& filteredProjections,
     std::vector<std::vector<std::vector<double>>>& volume) const {
 
-    // Eq. 28: Main reconstruction formula
+    std::cout << "\n=== Starting Backprojection ===" << std::endl;
 
     int nx = volume[0][0].size();
     int ny = volume[0].size();
     int nz = volume.size();
 
-    // Reconstruction grid (assume centered at origin)
+    std::cout << "Volume size: " << nz << " x " << ny << " x " << nx << std::endl;
+
+    double fov = 40.0;
+    double gridSpacing = fov / (nx - 1);
+    std::cout << "FOV: " << fov << ", Grid spacing: " << gridSpacing << std::endl;
+
+    int totalVoxels = 0;
+    int voxelsWithData = 0;
+    double minVal = 1e10, maxVal = -1e10;
 
     for (int iz = 0; iz < nz; iz++) {
-        double gridSpacing = 0.404;
-        double z = (iz - nz/2.0) * gridSpacing;
+        double z = (iz - (nz-1)/2.0) * gridSpacing;
 
         for (int iy = 0; iy < ny; iy++) {
-            double y = (iy - ny/2.0) * gridSpacing;
+            double y = (iy - (ny-1)/2.0) * gridSpacing;
 
             for (int ix = 0; ix < nx; ix++) {
-                double x = (ix - nx/2.0) * gridSpacing;
-
+                double x = (ix - (nx-1)/2.0) * gridSpacing;
                 double sum = 0.0;
+                int hitCount = 0;
 
-                // Loop over all projection angles
                 for (int angleIdx = 0; angleIdx < params_.numAngles; angleIdx++) {
                     double phi = 2.0 * PI * angleIdx / params_.numAngles;
-
-                    // Source position
                     double srcX = params_.d * cos(phi);
                     double srcY = params_.d * sin(phi);
+                    double srcZ = 0.0;
 
-                    // Vector from source to reconstruction point
                     double rx = x - srcX;
                     double ry = y - srcY;
-                    double rz = z;
+                    double rz = z - srcZ;
+                    double rayLength = sqrt(rx*rx + ry*ry + rz*rz);
 
-                    // Unit vector along x-hat direction (from source to axis)
-                    double xhatX = -cos(phi);
-                    double xhatY = -sin(phi);
+                    double rdx = rx / rayLength;
+                    double rdy = ry / rayLength;
+                    double rdz = rz / rayLength;
 
-                    // Distance weighting factor: d^2 / (d + r·x̂)^2 (Eq. 28)
-                    double r_dot_xhat = rx * xhatX + ry * xhatY;
-                    double U = params_.d + r_dot_xhat;
-                    double weight = (params_.d * params_.d) / (U * U);
+                    double detDist = params_.D - params_.d;
+                    double detCX = -detDist * cos(phi);
+                    double detCY = -detDist * sin(phi);
+                    double detCZ = 0.0;
 
-                    // Project point onto detector (Eq. 29, 30)
-                    double Y = (params_.d / U) * (rx * sin(phi) - ry * cos(phi));
-                    double Z = (params_.d / U) * rz;
+                    double normX = cos(phi);
+                    double normY = sin(phi);
+                    double normZ = 0.0;
 
-                    // Convert to detector indices
-                    double colFloat = Y / params_.detectorSpacing + params_.numDetectorCols / 2.0;
-                    double rowFloat = Z / params_.detectorSpacing + params_.numDetectorRows / 2.0;
+                    double denom = rdx * normX + rdy * normY + rdz * normZ;
+                    if (fabs(denom) < 1e-10) continue;
 
-                    // Bilinear interpolation
+                    double t = ((detCX - srcX) * normX +
+                               (detCY - srcY) * normY +
+                               (detCZ - srcZ) * normZ) / denom;
+
+                    if (t <= 0) continue;
+
+                    double intX = srcX + t * rdx;
+                    double intY = srcY + t * rdy;
+                    double intZ = srcZ + t * rdz;
+
+                    double dx_det = intX - detCX;
+                    double dy_det = intY - detCY;
+                    double dz_det = intZ - detCZ;
+
+                    double uX = -sin(phi);
+                    double uY = cos(phi);
+
+                    double u = dx_det * uX + dy_det * uY;
+                    double v = dz_det;
+
+                    double colFloat = u / params_.detectorSpacing + params_.numDetectorCols / 2.0;
+                    double rowFloat = v / params_.detectorSpacing + params_.numDetectorRows / 2.0;
+
                     int col0 = (int)floor(colFloat);
                     int row0 = (int)floor(rowFloat);
 
@@ -261,47 +312,48 @@ void FDKReconstructor::backproject(
                                    + dr * (1-dc) * filteredProjections[angleIdx][row0+1][col0]
                                    + dr * dc * filteredProjections[angleIdx][row0+1][col0+1];
 
+                        // After computing t and checking t > 0:
+                        double L = t; // distance from source to detector intersection
+                        double weight = (params_.d * params_.d) / (L * L);
                         sum += weight * val;
+
+
+                        sum += weight * val;
+                        hitCount++;
                     }
                 }
 
-                // Normalization factor from Eq. 28
-                volume[iz][iy][ix] = sum / (4.0 * PI * PI) *
-                                    (2.0 * PI / params_.numAngles);
+                volume[iz][iy][ix] = sum / params_.numAngles;
+                totalVoxels++;
+                if (hitCount > 0) voxelsWithData++;
+                minVal = std::min(minVal, volume[iz][iy][ix]);
+                maxVal = std::max(maxVal, volume[iz][iy][ix]);
             }
         }
     }
-}
 
+    std::cout << "Voxels with data: " << voxelsWithData << " / " << totalVoxels << std::endl;
+    std::cout << "Reconstruction value range: [" << minVal << ", " << maxVal << "]" << std::endl;
+}
 
 std::vector<std::vector<std::vector<double>>>
 FDKReconstructor::reconstruct(
     const std::vector<std::vector<std::vector<double>>>& projections) {
 
-    // Make a copy for filtering
+    std::cout << "\n=== Starting Reconstruction ===" << std::endl;
     auto filteredProj = projections;
 
-    // Process each projection
     for (int angleIdx = 0; angleIdx < params_.numAngles; angleIdx++) {
-        // Cosine weighting
         cosineWeight(filteredProj[angleIdx]);
-
-        // Filtering
         filterProjection(filteredProj[angleIdx]);
     }
 
-    // Initialize reconstruction volume
-    int volSize = 99; // From paper: 99x99x49
+    int volSize = 99;
     std::vector<std::vector<std::vector<double>>> volume(
-        49,  // z
-        std::vector<std::vector<double>>(
-            volSize,  // y
-            std::vector<double>(volSize, 0.0)  // x
-        )
+        49,
+        std::vector<std::vector<double>>(volSize, std::vector<double>(volSize, 0.0))
     );
 
-    // Backprojection
     backproject(filteredProj, volume);
-
     return volume;
 }
