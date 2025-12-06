@@ -2,7 +2,8 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-#include <opencv2/opencv.h>
+#include <sstream>
+#include <opencv2/opencv.hpp>
 #include "../include/fdk.h"
 #include "../include/phantom.h"
 
@@ -70,7 +71,7 @@ int main() {
     FDKReconstructor fdk(params);
 
     std::cout << "Generating projections..." << std::endl;
-    auto projections = loadProjectionsOpenCV();
+    auto projections = loadProjectionsOpenCV(params, );
 
     std::cout << "Reconstructing..." << std::endl;
     auto reconstruction = fdk.reconstruct(projections);
